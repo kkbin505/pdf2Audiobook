@@ -1,0 +1,6 @@
+pymupdf
+openai
+edge-tts
+tqdm
+python-dotenv
+nest_asyncio

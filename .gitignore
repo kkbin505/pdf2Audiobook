@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.env
+output_audiobook/
+*.pdf
+.DS_Store
+
+*.mp3
+
