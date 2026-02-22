@@ -3,6 +3,7 @@ import re
 import os
 import sys
 import fitz  # PyMuPDF
+import argparse
 from openai import AsyncOpenAI
 import edge_tts
 from tqdm.asyncio import tqdm
@@ -81,7 +82,11 @@ class PDFProcessor:
 
         print(f"Found {len(filtered_toc)} chapters in TOC.")
         
-        for i, (lvl, title, page_num, _) in enumerate(filtered_toc):
+        for i, item in enumerate(filtered_toc):
+            # Unpack first 3 elements safely (lvl, title, page_num)
+            # fitz.get_toc() can return 3 or 4 elements depending on options/version
+            lvl, title, page_num = item[0], item[1], item[2]
+
             # Page numbers in TOC are 1-based, fitz uses 0-based
             start_page = page_num - 1
             
@@ -215,24 +220,37 @@ class PDFProcessor:
 class AISummarizer:
     """Handles interaction with OpenAI API for summarization."""
     
-    def __init__(self):
+    def __init__(self, pdf_type="politic"):
         self.client = AsyncOpenAI(api_key=OPENAI_API_KEY)
         self.model = "gpt-4o-mini"
+        self.pdf_type = pdf_type
 
     async def summarize_chunk(self, text, title):
         """
         Summarizes the text using OpenAI GPT-4o-mini with specific prompt instructions.
         """
-        system_prompt = (
-            "You are an expert policy analyst and professional podcast host. Your task is to turn a technical research report "
-            "into a deep-dive, engaging audio script.\n"
-            "Requirements:\n"
-            "1. **Structure**: Follow this exact flow: Introduction & Context -> Current Status Analysis -> Deep Dive into Risks (include specific case studies A/B/C) -> Policy Implications -> Future Outlook.\n"
-            "2. **Content**: Do NOT summarize briefly. Retain specific examples, data points, and risk assessment details. Explain *why* things matter.\n"
-            "3. **Tone**: Authoritative but conversational. Distinct from a dry text-to-speech read. Use transition phrases like 'Now, let's look at...' or 'What this means is...'.\n"
-            "4. **Length**: Target 2000-3000 words (approx 15-20 mins spoken). Use full paragraphs.\n"
-            "5. **Output**: Plain text only. No Markdown keys. No 'Here is the summary' preambles."
-        )
+        if self.pdf_type == "history":
+            system_prompt = (
+                "You are an expert historian and professional storyteller. Your task is to turn a historical document "
+                "into a gripping, immersive audio narrative.\n"
+                "Requirements:\n"
+                "1. **Structure**: Chronological flow or Thematic exploration. Focus on the sequence of events, key figures, and the broader context of the era.\n"
+                "2. **Content**: Retain specific dates, names, and vivid details. Bring the past to life. Explain the *significance* of events.\n"
+                "3. **Tone**: Engaging, narrative, and slightly dramatic where appropriate. Think 'History Channel' documentary style.\n"
+                "4. **Length**: Target 2000-3000 words (approx 15-20 mins spoken). Use full paragraphs.\n"
+                "5. **Output**: Plain text only. No Markdown keys. No 'Here is the summary' preambles."
+            )
+        else: # Default: politic
+            system_prompt = (
+                "You are an expert policy analyst and professional podcast host. Your task is to turn a technical research report "
+                "into a deep-dive, engaging audio script.\n"
+                "Requirements:\n"
+                "1. **Structure**: Follow this exact flow: Introduction & Context -> Current Status Analysis -> Deep Dive into Risks (include specific case studies A/B/C) -> Policy Implications -> Future Outlook.\n"
+                "2. **Content**: Do NOT summarize briefly. Retain specific examples, data points, and risk assessment details. Explain *why* things matter.\n"
+                "3. **Tone**: Authoritative but conversational. Distinct from a dry text-to-speech read. Use transition phrases like 'Now, let's look at...' or 'What this means is...'.\n"
+                "4. **Length**: Target 2000-3000 words (approx 15-20 mins spoken). Use full paragraphs.\n"
+                "5. **Output**: Plain text only. No Markdown keys. No 'Here is the summary' preambles."
+            )
         
         # Helper to call API
         async def call_api(prompt_text, part_info=""):
@@ -275,8 +293,9 @@ class AISummarizer:
 class TTSGenerator:
     """Handles text-to-speech generation using edge-tts."""
     
-    def __init__(self, voice=DEFAULT_VOICE):
+    def __init__(self, voice=DEFAULT_VOICE, rate="+0%"):
         self.voice = voice
+        self.rate = rate
 
     async def generate_audio(self, text, output_filename):
         """Generates MP3 audio from text."""
@@ -285,7 +304,7 @@ class TTSGenerator:
             
         output_path = os.path.join(OUTPUT_DIR, output_filename)
         try:
-            communicate = edge_tts.Communicate(text, self.voice)
+            communicate = edge_tts.Communicate(text, self.voice, rate=self.rate)
             await communicate.save(output_path)
             return True
         except Exception as e:
@@ -314,13 +333,16 @@ async def process_chapter(chapter, summarizer, tts, index):
     return success
 
 async def main():
-    if len(sys.argv) < 2:
-        print("Usage: python pdf_to_audiobook.py <input_pdf_path>")
-        return
+    parser = argparse.ArgumentParser(description="Convert PDF to Audiobook with AI Summarization")
+    parser.add_argument("input_path", help="Path to PDF file or directory of PDFs")
+    parser.add_argument("--type", choices=["politic", "history"], default="politic", help="Type of content: 'politic' (default) or 'history'")
+    
+    args = parser.parse_args()
+    pdf_path = args.input_path
+    pdf_type = args.type
 
-    pdf_path = sys.argv[1]
     if not os.path.exists(pdf_path):
-        print(f"Error: File {pdf_path} not found.")
+        print(f"Error: File/Directory {pdf_path} not found.")
         return
 
     if not OPENAI_API_KEY:
@@ -329,18 +351,65 @@ async def main():
 
     print(f"Processing PDF: {pdf_path}")
     
-    # 1. Extract and Split
-    processor = PDFProcessor(pdf_path)
-    full_text = processor.extract_text()
-    if not full_text:
-        return
+    # 1. Input Handling: Directory (Multiple Chapters) vs File (Single PDF to Split)
+    chapters = []
+    
+    if os.path.isdir(pdf_path):
+        print(f"Detected directory input: {pdf_path}")
+        # Get all PDF files, sorted alphabetically
+        pdf_files = sorted([f for f in os.listdir(pdf_path) if f.lower().endswith(".pdf")])
         
-    chapters = processor.split_text(full_text)
-    print(f"Found/Split into {len(chapters)} chapters/sections.")
+        if not pdf_files:
+            print("No PDF files found in the directory.")
+            return
+
+        print(f"Found {len(pdf_files)} PDF files. Processing each as a chapter.")
+        
+        for pdf_file in pdf_files:
+            full_file_path = os.path.join(pdf_path, pdf_file)
+            print(f"  - Reading: {pdf_file}")
+            
+            processor = PDFProcessor(full_file_path)
+            text = processor.extract_text()
+            
+            if text:
+                # Use filename (without extension) as title
+                title = os.path.splitext(pdf_file)[0]
+                chapters.append({"title": title, "content": text})
+            else:
+                print(f"    Warning: Could not extract text from {pdf_file}")
+
+    else:
+        # Existing Logic: Single PDF file
+        processor = PDFProcessor(pdf_path)
+        full_text = processor.extract_text()
+        if not full_text:
+            return
+            
+        chapters = processor.split_text(full_text)
+    
+    # Common Validation
+    if not chapters:
+        print("No valid chapters found/extracted. Exiting.")
+        return
+
+    print(f"Prepared {len(chapters)} chapters/sections for processing.")
     
     # 2. Initialize AI and TTS
-    summarizer = AISummarizer()
-    tts = TTSGenerator()
+    # 2. Initialize AI and TTS
+    print(f"Initializing AI Summarizer (Type: {pdf_type}) and TTS...")
+    summarizer = AISummarizer(pdf_type=pdf_type)
+    
+    # Select Voice and Speed based on Type
+    if pdf_type == "history":
+        selected_voice = "en-US-AndrewNeural"
+        selected_rate = "-15%" # 85% speed for immersive historical narration
+    else:
+        selected_voice = DEFAULT_VOICE # en-US-JennyNeural
+        selected_rate = "+0%"
+        
+    tts = TTSGenerator(voice=selected_voice, rate=selected_rate)
+    print(f"Using Voice: {selected_voice} (Rate: {selected_rate})")
 
     # 3. Process Async
     print("Starting AI Summarization and Audio Generation...")
