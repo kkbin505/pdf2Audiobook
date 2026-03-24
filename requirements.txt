@@ -4,3 +4,5 @@ edge-tts
 tqdm
 python-dotenv
 nest_asyncio
+newspaper3k
+lxml_html_clean

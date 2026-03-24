@@ -21,8 +21,9 @@ if not OPENAI_API_KEY:
     # We won't exit here to allow importing modules, but main will fail.
 
 OUTPUT_DIR = "output_audiobook"
-DEFAULT_VOICE = "en-US-JennyNeural"  # English Female voice
-# DEFAULT_VOICE = "zh-CN-YunyangNeural" # Male voice
+# DEFAULT_VOICE = "en-US-JennyNeural"  # English Female voice
+DEFAULT_VOICE = "en-US-AndrewNeural" # English Male Andrew
+# DEFAULT_VOICE = "zh-CN-YunyangNeural" # Chinese Male voice
 
 # Ensure output directory exists
 os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -108,7 +109,7 @@ class PDFProcessor:
                 
         return chapters
 
-    def split_text(self, text, max_chars=10000, min_chars=2000):
+    def split_text(self, text, max_chars=25000, min_chars=5000):
         """
         Splits text into chapters/sections.
         Priority 1: TOC (if available and reliable).
@@ -125,8 +126,7 @@ class PDFProcessor:
         print("TOC splitting unavailable or insufficient. Falling back to Regex/Text analysis.")
         
         # 2. Refined Regex (Engineering-level de-noising)
-        # Targeted Pattern: "CHAPTER <digit>", "EXECUTIVE SUMMARY", "RECOMMENDATIONS", "第<digit>章"
-        # We use re.MULTILINE logic via (^|\n)
+        # Targeted Pattern: "CHAPTER <digit>", "EXECUTIVE SUMMARY", "RECOMMENDATIONS", "Chapter <digit>" (CN)
         chapter_pattern = r"(^|\n)\s*(CHAPTER\s+\d+|EXECUTIVE SUMMARY|RECOMMENDATIONS|第[0-9]+章)\s*(?=\n|$)"
         
         matches = list(re.finditer(chapter_pattern, text, re.IGNORECASE)) # Ignore case for robustness
@@ -222,7 +222,8 @@ class AISummarizer:
     
     def __init__(self, pdf_type="politic"):
         self.client = AsyncOpenAI(api_key=OPENAI_API_KEY)
-        self.model = "gpt-4o-mini"
+        # self.model = "gpt-4o-mini"
+        self.model = "gpt-4.1-mini"
         self.pdf_type = pdf_type
 
     async def summarize_chunk(self, text, title):
@@ -240,6 +241,16 @@ class AISummarizer:
                 "4. **Length**: Target 2000-3000 words (approx 15-20 mins spoken). Use full paragraphs.\n"
                 "5. **Output**: Plain text only. No Markdown keys. No 'Here is the summary' preambles."
             )
+        elif self.pdf_type == "news":
+            system_prompt = (
+                "You are an expert news announcer and professional podcast host. Your task is to turn a news article "
+                "into a natural, spoken-style briefing.\n"
+                "Requirements:\n"
+                "1. **Tone**: Conversational, engaging, and clear. Use phrases like 'Interestingly...', 'Check this out...', or 'Moving on to...'.\n"
+                "2. **Content**: Keep the original information and key points. Do NOT expand the content excessively. Maintain a similar length to the original text.\n"
+                "3. **Style**: Optimize for text-to-speech. Avoid complex tables or dry citations. Make it sound like a person telling a friend about the news.\n"
+                "4. **Output**: Plain text only. No Markdown keys. No 'Here is the spoken version' preambles."
+            )
         else: # Default: politic
             system_prompt = (
                 "You are an expert policy analyst and professional podcast host. Your task is to turn a technical research report "
@@ -248,7 +259,7 @@ class AISummarizer:
                 "1. **Structure**: Follow this exact flow: Introduction & Context -> Current Status Analysis -> Deep Dive into Risks (include specific case studies A/B/C) -> Policy Implications -> Future Outlook.\n"
                 "2. **Content**: Do NOT summarize briefly. Retain specific examples, data points, and risk assessment details. Explain *why* things matter.\n"
                 "3. **Tone**: Authoritative but conversational. Distinct from a dry text-to-speech read. Use transition phrases like 'Now, let's look at...' or 'What this means is...'.\n"
-                "4. **Length**: Target 2000-3000 words (approx 15-20 mins spoken). Use full paragraphs.\n"
+                "4. **Length**: Target 4000-8000 words (approx 20-30 mins spoken). Use full paragraphs.\n"
                 "5. **Output**: Plain text only. No Markdown keys. No 'Here is the summary' preambles."
             )
         
@@ -270,7 +281,7 @@ class AISummarizer:
                 return ""
 
         # Logic to handle large chapters > 15000 chars
-        MAX_CHUNK_SIZE = 15000
+        MAX_CHUNK_SIZE = 25000
         if len(text) > MAX_CHUNK_SIZE:
             print(f"Chapter '{title}' is large ({len(text)} chars). Splitting into parts...")
             # Calculate number of parts needed

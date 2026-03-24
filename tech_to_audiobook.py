@@ -8,34 +8,34 @@ from openai import AsyncOpenAI
 from dotenv import load_dotenv
 from datetime import datetime
 
-# 加载配置
+# Load configuration
 load_dotenv()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 client = AsyncOpenAI(api_key=OPENAI_API_KEY)
 
-# 配置参数
+# Configuration parameters
 VOICE = "en-US-AndrewNeural"
-RATE = "-10%"  # 90% 语速
+RATE = "-10%"  # 90% playback speed
 OUTPUT_DIR = "uav_briefing_audio"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-# 建议抓取源列表
+# List of suggested news sources
 news_sources = [
-    # --- ArduPilot & UAV 核心层 ---
+    # --- ArduPilot & UAV Core ---
     {"name": "ArduPilot_Blog", "url": "https://discuss.ardupilot.org/c/blog.rss", "type": "tech"},
     {"name": "ArduPilot_GitHub", "url": "https://github.com/ArduPilot/ardupilot/commits/master.atom", "type": "code_change"},
     {"name": "PX4_Autopilot", "url": "https://px4.io/feed/", "type": "tech"},
     {"name": "sUAS_News", "url": "https://www.suasnews.com/feed/", "type": "industry"},
 
-    # --- 自动驾驶与机器人算法 ---
+    # --- Autonomous Driving & Robotics Algorithms ---
     {"name": "IEEE_Spectrum_Robotics", "url": "https://spectrum.ieee.org/rss/robotics/fulltext", "type": "academic"},
     {"name": "The_Robot_Report", "url": "https://www.therobotreport.com/feed/", "type": "industry"},
     {"name": "DeepMind_Blog", "url": "https://deepmind.google/blog/rss.xml", "type": "ai_research"},
 
-    # --- 尔湾校内动态 ---
+    # --- UCI Campus Dynamics ---
     {"name": "UCI_MAE_News", "url": "https://engineering.uci.edu/dept/mae/news/rss", "type": "campus"},
     
-    # --- 极客趋势 ---
+    # --- Geek Trends ---
     {"name": "Hacker_News_Top", "url": "https://rsshub.app/hackernews/topten", "type": "hacker"},
     {"name": "GitHub_Trending_CPP", "url": "https://rsshub.app/github/trending/daily/cpp", "type": "code_trend"}
 ]
@@ -45,18 +45,18 @@ class NewsBriefingGenerator:
         self.sources = news_sources
 
     async def fetch_source(self, session, source):
-        """异步抓取并解析单个 RSS/Atom 源"""
+        """Asynchronously fetch and parse a single RSS/Atom source."""
         try:
             async with session.get(source['url'], timeout=10) as response:
                 if response.status == 200:
                     content = await response.text()
                     feed = feedparser.parse(content)
                     entries = []
-                    # 仅取最近的 3 条，避免 context 爆炸
+                    # Fetch only the latest 3 entries to avoid context window overflow
                     for entry in feed.entries[:3]:
                         title = entry.get('title', 'No Title')
                         summary = entry.get('summary', entry.get('description', ''))
-                        # 去除 HTML 标签
+                        # Strip HTML tags
                         summary = re.sub(r'<[^>]+>', '', summary)
                         entries.append(f"[{source['name']}] {title}: {summary[:500]}")
                     return "\n".join(entries)
@@ -68,16 +68,16 @@ class NewsBriefingGenerator:
             return ""
 
     async def gather_all_news(self):
-        """并发抓取所有新闻源"""
-        print(">>> 正在从全球无人机及机器人技术源站抓取情报...")
+        """Fetch all news sources concurrently."""
+        print(">>> Fetching intelligence from global UAV and robotics sources...")
         async with aiohttp.ClientSession() as session:
             tasks = [self.fetch_source(session, source) for source in self.sources]
             results = await asyncio.gather(*tasks)
             return "\n\n".join([r for r in results if r])
 
     async def summarize_to_briefing(self, content):
-        """采用‘无人机架构师’视角进行深度总结（播客脚本风格）"""
-        print(">>> 正在进行硬核技术脱水总结 (算法去 AI 冗余)...")
+        """Generate a deep summary from a 'UAV Systems Architect' perspective (Podcast script style)."""
+        print(">>> Performing hardcore technical extraction (de-AI redundancy)...")
         current_date = datetime.now().strftime("%Y-%m-%d")
         system_prompt = (
             "You are a Senior UAV Systems Architect with 9 years of FPV experience, "
@@ -97,7 +97,7 @@ class NewsBriefingGenerator:
         
         try:
             response = await client.chat.completions.create(
-                model="gpt-4o", # 使用主流模型保证总结质量
+                model="gpt-4o", # Use GPT-4o for high-quality technical summarization
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": f"Today's raw data ({current_date}):\n\n{content}"}
@@ -110,27 +110,27 @@ class NewsBriefingGenerator:
             return "Internal briefing error."
 
     async def generate_speech(self, text, filename):
-        """使用 en-US-AndrewNeural 生成语音，语速 90%"""
-        print(f">>> 正在生成 Andrew 语音简报 [Speed: 90%]: {filename}")
+        """Generate speech using en-US-AndrewNeural at 90% speed."""
+        print(f">>> Generating Andrew's voice briefing [Speed: 90%]: {filename}")
         output_path = os.path.join(OUTPUT_DIR, filename)
-        # 注意：Andrew 虽然是英文人声，但他对中英混排的处理在 TTS 中表现稳健
+        # Note: Andrew is an English voice but handles mixed Chinese/English text robustly in TTS.
         communicate = edge_tts.Communicate(text, VOICE, rate=RATE)
         await communicate.save(output_path)
-        print(f">>> 简报已生成: {output_path}")
+        print(f">>> Briefing generated: {output_path}")
 
 async def run_pipeline():
     generator = NewsBriefingGenerator()
     
-    # 1. 抓取 RSS
+    # 1. Fetch RSS feeds
     all_content = await generator.gather_all_news()
     if not all_content.strip():
         print("No news content found. Check internet or source URLs.")
         return
 
-    # 2. 生成播客脚本
+    # 2. Generate podcast script
     briefing_script = await generator.summarize_to_briefing(all_content)
     
-    # 3. 语音合成
+    # 3. Text-to-Speech synthesis
     today_str = datetime.now().strftime("%Y%m%d")
     await generator.generate_speech(briefing_script, f"Briefing_{today_str}.mp3")
 

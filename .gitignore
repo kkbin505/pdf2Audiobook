@@ -6,6 +6,19 @@ output_audiobook/
 .DS_Store
 
 *.mp3
+*.jpg
+*.jpeg
+
+book/
 
 command.md
 
+radiostation_setup.txt
+
+tech_to_audiobook.py
+test_edge_tts_voices.py
+debug_voices.py
+tech_to_audiobook.py
+tech_to_audiobook.py
+tech_to_audiobook.py
+rss2podcast.py
